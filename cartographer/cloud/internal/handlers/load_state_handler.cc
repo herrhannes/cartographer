@@ -28,14 +28,11 @@ namespace handlers {
 
 void LoadStateHandler::OnRequest(const proto::LoadStateRequest& request) {
   switch (request.state_chunk_case()) {
-    case proto::LoadStateRequest::kPoseGraph:
-      reader_.AddProto(request.pose_graph());
-      break;
-    case proto::LoadStateRequest::kAllTrajectoryBuilderOptions:
-      reader_.AddProto(request.all_trajectory_builder_options());
-      break;
     case proto::LoadStateRequest::kSerializedData:
       reader_.AddProto(request.serialized_data());
+      break;
+    case proto::LoadStateRequest::kSerializationHeader:
+      reader_.AddProto(request.serialization_header());
       break;
     default:
       LOG(FATAL) << "Unhandled proto::LoadStateRequest case.";

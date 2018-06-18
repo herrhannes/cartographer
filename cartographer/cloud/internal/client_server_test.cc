@@ -20,7 +20,9 @@
 #include "cartographer/cloud/client/map_builder_stub.h"
 #include "cartographer/cloud/internal/map_builder_server.h"
 #include "cartographer/cloud/map_builder_server_options.h"
+#include "cartographer/io/testing/test_helpers.h"
 #include "cartographer/mapping/internal/testing/mock_map_builder.h"
+#include "cartographer/mapping/internal/testing/mock_pose_graph.h"
 #include "cartographer/mapping/internal/testing/mock_trajectory_builder.h"
 #include "cartographer/mapping/internal/testing/test_helpers.h"
 #include "cartographer/mapping/local_slam_result_data.h"
@@ -28,11 +30,13 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using ::cartographer::io::testing::ProtoReaderFromStrings;
 using ::cartographer::mapping::MapBuilder;
 using ::cartographer::mapping::MapBuilderInterface;
 using ::cartographer::mapping::PoseGraphInterface;
 using ::cartographer::mapping::TrajectoryBuilderInterface;
 using ::cartographer::mapping::testing::MockMapBuilder;
+using ::cartographer::mapping::testing::MockPoseGraph;
 using ::cartographer::mapping::testing::MockTrajectoryBuilder;
 using ::testing::_;
 using SensorId = ::cartographer::mapping::TrajectoryBuilderInterface::SensorId;
@@ -46,6 +50,28 @@ const SensorId kRangeSensorId{SensorId::SensorType::RANGE, "range"};
 constexpr double kDuration = 4.;         // Seconds.
 constexpr double kTimeStep = 0.1;        // Seconds.
 constexpr double kTravelDistance = 1.2;  // Meters.
+
+constexpr char kSerializationHeaderProtoString[] = "format_version: 1";
+constexpr char kUnsupportedSerializationHeaderProtoString[] =
+    "format_version: 123";
+constexpr char kPoseGraphProtoString[] = R"(pose_graph {
+      trajectory: {
+        trajectory_id: 0
+		node: {}
+		submap: {}
+	  }
+    })";
+constexpr char kAllTrajectoryBuilderOptionsProtoString[] =
+    R"(all_trajectory_builder_options {
+      options_with_sensor_ids: {}
+    })";
+constexpr char kSubmapProtoString[] = "submap {}";
+constexpr char kNodeProtoString[] = "node {}";
+constexpr char kTrajectoryDataProtoString[] = "trajectory_data {}";
+constexpr char kImuDataProtoString[] = "imu_data {}";
+constexpr char kOdometryDataProtoString[] = "odometry_data {}";
+constexpr char kFixedFramePoseDataProtoString[] = "fixed_frame_pose_data {}";
+constexpr char kLandmarkDataProtoString[] = "landmark_data {}";
 
 class ClientServerTest : public ::testing::Test {
  protected:
@@ -62,7 +88,7 @@ class ClientServerTest : public ::testing::Test {
       MAP_BUILDER_SERVER.server_address = "0.0.0.0:50051"
       return MAP_BUILDER_SERVER)text";
     auto map_builder_server_parameters =
-        mapping::test::ResolveLuaParameters(kMapBuilderServerLua);
+        mapping::testing::ResolveLuaParameters(kMapBuilderServerLua);
     map_builder_server_options_ =
         CreateMapBuilderServerOptions(map_builder_server_parameters.get());
 
@@ -77,7 +103,7 @@ class ClientServerTest : public ::testing::Test {
       MAP_BUILDER_SERVER.upload_batch_size = 1
       return MAP_BUILDER_SERVER)text";
     auto uploading_map_builder_server_parameters =
-        mapping::test::ResolveLuaParameters(kUploadingMapBuilderServerLua);
+        mapping::testing::ResolveLuaParameters(kUploadingMapBuilderServerLua);
     uploading_map_builder_server_options_ = CreateMapBuilderServerOptions(
         uploading_map_builder_server_parameters.get());
 
@@ -87,7 +113,7 @@ class ClientServerTest : public ::testing::Test {
       TRAJECTORY_BUILDER.trajectory_builder_2d.submaps.num_range_data = 4
       return TRAJECTORY_BUILDER)text";
     auto trajectory_builder_parameters =
-        mapping::test::ResolveLuaParameters(kTrajectoryBuilderLua);
+        mapping::testing::ResolveLuaParameters(kTrajectoryBuilderLua);
     trajectory_builder_options_ = mapping::CreateTrajectoryBuilderOptions(
         trajectory_builder_parameters.get());
     number_of_insertion_results_ = 0;
@@ -126,6 +152,10 @@ class ClientServerTest : public ::testing::Test {
   void InitializeServerWithMockMapBuilder() {
     auto mock_map_builder = common::make_unique<MockMapBuilder>();
     mock_map_builder_ = mock_map_builder.get();
+    mock_pose_graph_ = common::make_unique<MockPoseGraph>();
+    EXPECT_CALL(*mock_map_builder_, pose_graph())
+        .WillOnce(::testing::Return(mock_pose_graph_.get()));
+    EXPECT_CALL(*mock_pose_graph_, SetGlobalSlamOptimizationCallback(_));
     server_ = common::make_unique<MapBuilderServer>(
         map_builder_server_options_, std::move(mock_map_builder));
     EXPECT_TRUE(server_ != nullptr);
@@ -160,6 +190,7 @@ class ClientServerTest : public ::testing::Test {
   proto::MapBuilderServerOptions map_builder_server_options_;
   proto::MapBuilderServerOptions uploading_map_builder_server_options_;
   MockMapBuilder* mock_map_builder_;
+  std::unique_ptr<MockPoseGraph> mock_pose_graph_;
   std::unique_ptr<MockTrajectoryBuilder> mock_trajectory_builder_;
   ::cartographer::mapping::proto::TrajectoryBuilderOptions
       trajectory_builder_options_;
@@ -271,7 +302,7 @@ TEST_F(ClientServerTest, LocalSlam2D) {
                                   local_slam_result_callback_);
   TrajectoryBuilderInterface* trajectory_stub =
       stub_->GetTrajectoryBuilder(trajectory_id);
-  const auto measurements = mapping::test::GenerateFakeRangeMeasurements(
+  const auto measurements = mapping::testing::GenerateFakeRangeMeasurements(
       kTravelDistance, kDuration, kTimeStep);
   for (const auto& measurement : measurements) {
     trajectory_stub->AddSensorData(kRangeSensorId.id, measurement);
@@ -309,7 +340,7 @@ TEST_F(ClientServerTest, GlobalSlam3D) {
       local_slam_result_callback_);
   TrajectoryBuilderInterface* trajectory_stub =
       stub_->GetTrajectoryBuilder(trajectory_id);
-  const auto measurements = mapping::test::GenerateFakeRangeMeasurements(
+  const auto measurements = mapping::testing::GenerateFakeRangeMeasurements(
       kTravelDistance, kDuration, kTimeStep);
   for (const auto& measurement : measurements) {
     sensor::ImuData imu_data{
@@ -374,7 +405,7 @@ TEST_F(ClientServerTest, LocalSlam2DWithUploadingServer) {
       local_slam_result_callback_);
   TrajectoryBuilderInterface* trajectory_stub =
       stub_for_uploading_server_->GetTrajectoryBuilder(trajectory_id);
-  const auto measurements = mapping::test::GenerateFakeRangeMeasurements(
+  const auto measurements = mapping::testing::GenerateFakeRangeMeasurements(
       kTravelDistance, kDuration, kTimeStep);
   for (const auto& measurement : measurements) {
     trajectory_stub->AddSensorData(kRangeSensorId.id, measurement);
@@ -389,6 +420,31 @@ TEST_F(ClientServerTest, LocalSlam2DWithUploadingServer) {
                   .norm(),
               0.1 * kTravelDistance);
   uploading_server_->Shutdown();
+  server_->Shutdown();
+}
+
+TEST_F(ClientServerTest, LoadState) {
+  InitializeRealServer();
+  server_->Start();
+  InitializeStub();
+
+  // Load text proto into in_memory_reader.
+  auto reader =
+      ProtoReaderFromStrings(kSerializationHeaderProtoString,
+                             {
+                                 kPoseGraphProtoString,
+                                 kAllTrajectoryBuilderOptionsProtoString,
+                                 kSubmapProtoString,
+                                 kNodeProtoString,
+                                 kTrajectoryDataProtoString,
+                                 kImuDataProtoString,
+                                 kOdometryDataProtoString,
+                                 kFixedFramePoseDataProtoString,
+                                 kLandmarkDataProtoString,
+                             });
+
+  stub_->LoadState(reader.get(), true);
+  EXPECT_TRUE(stub_->pose_graph()->IsTrajectoryFrozen(0));
   server_->Shutdown();
 }
 

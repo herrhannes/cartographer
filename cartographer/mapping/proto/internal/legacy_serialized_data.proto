@@ -1,4 +1,4 @@
-// Copyright 2016 The Cartographer Authors
+// Copyright 2018 The Cartographer Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,13 +14,16 @@
 
 syntax = "proto3";
 
-import "cartographer/mapping/2d/proto/cell_limits.proto";
-import "cartographer/transform/proto/transform.proto";
-
 package cartographer.mapping.proto;
 
-message MapLimits {
-  double resolution = 1;
-  cartographer.transform.proto.Vector2d max = 2;
-  CellLimits cell_limits = 3;
+import "cartographer/mapping/proto/serialization.proto";
+
+message LegacySerializedData {
+  Submap submap = 1;
+  Node node = 2;
+  ImuData imu_data = 3;
+  OdometryData odometry_data = 4;
+  FixedFramePoseData fixed_frame_pose_data = 5;
+  TrajectoryData trajectory_data = 6;
+  LandmarkData landmark_data = 7;
 }

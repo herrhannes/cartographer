@@ -37,6 +37,7 @@
 #include "cartographer/mapping/internal/optimization/optimization_problem_3d.h"
 #include "cartographer/mapping/internal/trajectory_connectivity_state.h"
 #include "cartographer/mapping/pose_graph.h"
+#include "cartographer/mapping/pose_graph_data.h"
 #include "cartographer/mapping/pose_graph_trimmer.h"
 #include "cartographer/sensor/fixed_frame_pose_data.h"
 #include "cartographer/sensor/landmark_data.h"
@@ -92,9 +93,9 @@ class PoseGraph3D : public PoseGraph {
       EXCLUDES(mutex_);
 
   void FinishTrajectory(int trajectory_id) override;
-  bool IsTrajectoryFinished(int trajectory_id) override REQUIRES(mutex_);
+  bool IsTrajectoryFinished(int trajectory_id) const override REQUIRES(mutex_);
   void FreezeTrajectory(int trajectory_id) override;
-  bool IsTrajectoryFrozen(int trajectory_id) override REQUIRES(mutex_);
+  bool IsTrajectoryFrozen(int trajectory_id) const override REQUIRES(mutex_);
   void AddSubmapFromProto(const transform::Rigid3d& global_submap_pose,
                           const proto::Submap& submap) override;
   void AddNodeFromProto(const transform::Rigid3d& global_pose,
@@ -106,36 +107,41 @@ class PoseGraph3D : public PoseGraph {
       const std::vector<Constraint>& constraints) override;
   void AddTrimmer(std::unique_ptr<PoseGraphTrimmer> trimmer) override;
   void RunFinalOptimization() override;
-  std::vector<std::vector<int>> GetConnectedTrajectories() override;
-  PoseGraph::SubmapData GetSubmapData(const SubmapId& submap_id)
+  std::vector<std::vector<int>> GetConnectedTrajectories() const override;
+  PoseGraph::SubmapData GetSubmapData(const SubmapId& submap_id) const
       EXCLUDES(mutex_) override;
-  MapById<SubmapId, SubmapData> GetAllSubmapData() EXCLUDES(mutex_) override;
-  MapById<SubmapId, SubmapPose> GetAllSubmapPoses() EXCLUDES(mutex_) override;
-  transform::Rigid3d GetLocalToGlobalTransform(int trajectory_id)
+  MapById<SubmapId, SubmapData> GetAllSubmapData() const
       EXCLUDES(mutex_) override;
-  MapById<NodeId, TrajectoryNode> GetTrajectoryNodes() override
+  MapById<SubmapId, SubmapPose> GetAllSubmapPoses() const
+      EXCLUDES(mutex_) override;
+  transform::Rigid3d GetLocalToGlobalTransform(int trajectory_id) const
+      EXCLUDES(mutex_) override;
+  MapById<NodeId, TrajectoryNode> GetTrajectoryNodes() const override
       EXCLUDES(mutex_);
-  MapById<NodeId, TrajectoryNodePose> GetTrajectoryNodePoses() override
+  MapById<NodeId, TrajectoryNodePose> GetTrajectoryNodePoses() const override
       EXCLUDES(mutex_);
-  std::map<std::string, transform::Rigid3d> GetLandmarkPoses() override
+  std::map<std::string, transform::Rigid3d> GetLandmarkPoses() const override
       EXCLUDES(mutex_);
   void SetLandmarkPose(const std::string& landmark_id,
                        const transform::Rigid3d& global_pose) override
       EXCLUDES(mutex_);
-  sensor::MapByTime<sensor::ImuData> GetImuData() override EXCLUDES(mutex_);
-  sensor::MapByTime<sensor::OdometryData> GetOdometryData() override
+  sensor::MapByTime<sensor::ImuData> GetImuData() const override
       EXCLUDES(mutex_);
-  sensor::MapByTime<sensor::FixedFramePoseData> GetFixedFramePoseData() override
+  sensor::MapByTime<sensor::OdometryData> GetOdometryData() const override
       EXCLUDES(mutex_);
+  sensor::MapByTime<sensor::FixedFramePoseData> GetFixedFramePoseData()
+      const override EXCLUDES(mutex_);
   std::map<std::string /* landmark ID */, PoseGraph::LandmarkNode>
-  GetLandmarkNodes() override EXCLUDES(mutex_);
-  std::map<int, TrajectoryData> GetTrajectoryData() override;
+  GetLandmarkNodes() const override EXCLUDES(mutex_);
+  std::map<int, TrajectoryData> GetTrajectoryData() const override;
 
-  std::vector<Constraint> constraints() override EXCLUDES(mutex_);
+  std::vector<Constraint> constraints() const override EXCLUDES(mutex_);
   void SetInitialTrajectoryPose(int from_trajectory_id, int to_trajectory_id,
                                 const transform::Rigid3d& pose,
                                 const common::Time time) override
       EXCLUDES(mutex_);
+  void SetGlobalSlamOptimizationCallback(
+      PoseGraphInterface::GlobalSlamOptimizationCallback callback) override;
   transform::Rigid3d GetInterpolatedGlobalTrajectoryPose(
       int trajectory_id, const common::Time time) const REQUIRES(mutex_);
 
@@ -145,22 +151,7 @@ class PoseGraph3D : public PoseGraph {
   void WaitForAllComputations() EXCLUDES(mutex_);
 
  private:
-  // The current state of the submap in the background threads. When this
-  // transitions to kFinished, all nodes are tried to match against this submap.
-  // Likewise, all new nodes are matched against submaps which are finished.
-  enum class SubmapState { kActive, kFinished };
-  struct InternalSubmapData {
-    std::shared_ptr<const Submap3D> submap;
-
-    // IDs of the nodes that were inserted into this map together with
-    // constraints for them. They are not to be matched again when this submap
-    // becomes 'finished'.
-    std::set<NodeId> node_ids;
-
-    SubmapState state = SubmapState::kActive;
-  };
-
-  MapById<SubmapId, SubmapData> GetSubmapDataUnderLock() REQUIRES(mutex_);
+  MapById<SubmapId, SubmapData> GetSubmapDataUnderLock() const REQUIRES(mutex_);
 
   // Handles a new work item.
   void AddWorkItem(const std::function<void()>& work_item) REQUIRES(mutex_);
@@ -189,9 +180,9 @@ class PoseGraph3D : public PoseGraph {
   void ComputeConstraintsForOldNodes(const SubmapId& submap_id)
       REQUIRES(mutex_);
 
-  // Registers the callback to run the optimization once all constraints have
-  // been computed, that will also do all work that queue up in 'work_queue_'.
-  void HandleWorkQueue() REQUIRES(mutex_);
+  // Runs the optimization, executes the trimmers and processes the work queue.
+  void HandleWorkQueue(const constraints::ConstraintBuilder3D::Result& result)
+      REQUIRES(mutex_);
 
   // Runs the optimization. Callers have to make sure, that there is only one
   // optimization being run at a time.
@@ -203,7 +194,7 @@ class PoseGraph3D : public PoseGraph {
       const MapById<SubmapId, optimization::SubmapSpec3D>& global_submap_poses,
       int trajectory_id) const REQUIRES(mutex_);
 
-  PoseGraph::SubmapData GetSubmapDataUnderLock(const SubmapId& submap_id)
+  PoseGraph::SubmapData GetSubmapDataUnderLock(const SubmapId& submap_id) const
       REQUIRES(mutex_);
 
   common::Time GetLatestNodeTime(const NodeId& node_id,
@@ -212,22 +203,23 @@ class PoseGraph3D : public PoseGraph {
 
   // Logs histograms for the translational and rotational residual of node
   // poses.
-  void LogResidualHistograms() REQUIRES(mutex_);
+  void LogResidualHistograms() const REQUIRES(mutex_);
 
   // Updates the trajectory connectivity structure with a new constraint.
   void UpdateTrajectoryConnectivity(const Constraint& constraint)
       REQUIRES(mutex_);
 
+  // Schedules optimization (i.e. loop closure) to run.
+  void DispatchOptimization() REQUIRES(mutex_);
+
   const proto::PoseGraphOptions options_;
-  common::Mutex mutex_;
+  GlobalSlamOptimizationCallback global_slam_optimization_callback_;
+  mutable common::Mutex mutex_;
 
   // If it exists, further work items must be added to this queue, and will be
   // considered later.
   std::unique_ptr<std::deque<std::function<void()>>> work_queue_
       GUARDED_BY(mutex_);
-
-  // How our various trajectories are related.
-  TrajectoryConnectivityState trajectory_connectivity_state_;
 
   // We globally localize a fraction of the nodes from each trajectory.
   std::unordered_map<int, std::unique_ptr<common::FixedRatioSampler>>
@@ -239,42 +231,14 @@ class PoseGraph3D : public PoseGraph {
   // Whether the optimization has to be run before more data is added.
   bool run_loop_closure_ GUARDED_BY(mutex_) = false;
 
-  // Schedules optimization (i.e. loop closure) to run.
-  void DispatchOptimization() REQUIRES(mutex_);
-
   // Current optimization problem.
   std::unique_ptr<optimization::OptimizationProblem3D> optimization_problem_;
   constraints::ConstraintBuilder3D constraint_builder_ GUARDED_BY(mutex_);
-  std::vector<Constraint> constraints_ GUARDED_BY(mutex_);
-
-  // Submaps get assigned an ID and state as soon as they are seen, even
-  // before they take part in the background computations.
-  MapById<SubmapId, InternalSubmapData> submap_data_ GUARDED_BY(mutex_);
-
-  // Data that are currently being shown.
-  MapById<NodeId, TrajectoryNode> trajectory_nodes_ GUARDED_BY(mutex_);
-  int num_trajectory_nodes_ GUARDED_BY(mutex_) = 0;
-
-  // Global submap poses currently used for displaying data.
-  MapById<SubmapId, optimization::SubmapSpec3D> global_submap_poses_
-      GUARDED_BY(mutex_);
-
-  // Global landmark poses with all observations.
-  std::map<std::string /* landmark ID */, PoseGraph::LandmarkNode>
-      landmark_nodes_ GUARDED_BY(mutex_);
 
   // List of all trimmers to consult when optimizations finish.
   std::vector<std::unique_ptr<PoseGraphTrimmer>> trimmers_ GUARDED_BY(mutex_);
 
-  // Set of all frozen trajectories not being optimized.
-  std::set<int> frozen_trajectories_ GUARDED_BY(mutex_);
-
-  // Set of all finished trajectories.
-  std::set<int> finished_trajectories_ GUARDED_BY(mutex_);
-
-  // Set of all initial trajectory poses.
-  std::map<int, InitialTrajectoryPose> initial_trajectory_poses_
-      GUARDED_BY(mutex_);
+  PoseGraphData data_ GUARDED_BY(mutex_);
 
   // Allows querying and manipulating the pose graph by the 'trimmers_'. The
   // 'mutex_' of the pose graph is held while this class is used.
@@ -291,7 +255,7 @@ class PoseGraph3D : public PoseGraph {
         REQUIRES(parent_->mutex_);
     const std::vector<Constraint>& GetConstraints() const override
         REQUIRES(parent_->mutex_);
-    void MarkSubmapAsTrimmed(const SubmapId& submap_id)
+    void TrimSubmap(const SubmapId& submap_id)
         REQUIRES(parent_->mutex_) override;
     bool IsFinished(int trajectory_id) const override REQUIRES(parent_->mutex_);
 
