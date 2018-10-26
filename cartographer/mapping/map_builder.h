@@ -56,10 +56,17 @@ class MapBuilder : public MapBuilderInterface {
   std::string SubmapToProto(const SubmapId &submap_id,
                             proto::SubmapQuery::Response *response) override;
 
-  void SerializeState(io::ProtoStreamWriterInterface *writer) override;
+  void SerializeState(bool include_unfinished_submaps,
+                      io::ProtoStreamWriterInterface *writer) override;
 
-  void LoadState(io::ProtoStreamReaderInterface *reader,
-                 bool load_frozen_state) override;
+  bool SerializeStateToFile(bool include_unfinished_submaps,
+                            const std::string &filename) override;
+
+  std::map<int, int> LoadState(io::ProtoStreamReaderInterface *reader,
+                               bool load_frozen_state) override;
+
+  std::map<int, int> LoadStateFromFile(const std::string &filename,
+                                       const bool load_frozen_state) override;
 
   mapping::PoseGraphInterface *pose_graph() override {
     return pose_graph_.get();

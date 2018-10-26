@@ -23,6 +23,7 @@
 #include "cartographer/io/fake_file_writer.h"
 #include "cartographer/io/points_processor_pipeline_builder.h"
 #include "cartographer/mapping/2d/probability_grid_range_data_inserter_2d.h"
+#include "cartographer/mapping/value_conversion_tables.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
@@ -31,13 +32,13 @@ namespace io {
 namespace {
 
 std::unique_ptr<PointsBatch> CreatePointsBatch() {
-  auto points_batch = cartographer::common::make_unique<PointsBatch>();
+  auto points_batch = ::absl::make_unique<PointsBatch>();
   points_batch->origin = Eigen::Vector3f(0, 0, 0);
-  points_batch->points.emplace_back(0.0f, 0.0f, 0.0f);
-  points_batch->points.emplace_back(0.0f, 1.0f, 2.0f);
-  points_batch->points.emplace_back(1.0f, 2.0f, 4.0f);
-  points_batch->points.emplace_back(0.0f, 3.0f, 5.0f);
-  points_batch->points.emplace_back(3.0f, 0.0f, 6.0f);
+  points_batch->points.push_back({Eigen::Vector3f{0.0f, 0.0f, 0.0f}});
+  points_batch->points.push_back({Eigen::Vector3f{0.0f, 1.0f, 2.0f}});
+  points_batch->points.push_back({Eigen::Vector3f{1.0f, 2.0f, 4.0f}});
+  points_batch->points.push_back({Eigen::Vector3f{0.0f, 3.0f, 5.0f}});
+  points_batch->points.push_back({Eigen::Vector3f{3.0f, 0.0f, 6.0f}});
   return points_batch;
 }
 
@@ -47,9 +48,8 @@ std::unique_ptr<PointsBatch> CreatePointsBatch() {
   return [&fake_file_writer_output,
           &expected_filename](const std::string& full_filename) {
     EXPECT_EQ(expected_filename, full_filename);
-    return ::cartographer::common::make_unique<
-        ::cartographer::io::FakeFileWriter>(full_filename,
-                                            fake_file_writer_output);
+    return ::absl::make_unique<::cartographer::io::FakeFileWriter>(
+        full_filename, fake_file_writer_output);
   };
 }
 
@@ -58,8 +58,8 @@ CreatePipelineFromDictionary(
     common::LuaParameterDictionary* const pipeline_dictionary,
     const std::vector<mapping::proto::Trajectory>& trajectories,
     ::cartographer::io::FileWriterFactory file_writer_factory) {
-  auto builder = ::cartographer::common::make_unique<
-      ::cartographer::io::PointsProcessorPipelineBuilder>();
+  auto builder =
+      ::absl::make_unique<::cartographer::io::PointsProcessorPipelineBuilder>();
   builder->Register(
       ProbabilityGridPointsProcessor::kConfigurationFileActionName,
       [&trajectories, file_writer_factory](
@@ -81,8 +81,9 @@ std::vector<char> CreateExpectedProbabilityGrid(
               CreateProbabilityGridRangeDataInserterOptions2D(
                   probability_grid_options->GetDictionary("range_data_inserter")
                       .get()));
-  auto probability_grid =
-      CreateProbabilityGrid(probability_grid_options->GetDouble("resolution"));
+  mapping::ValueConversionTables conversion_tables;
+  auto probability_grid = CreateProbabilityGrid(
+      probability_grid_options->GetDouble("resolution"), &conversion_tables);
   range_data_inserter.Insert({points_batch->origin, points_batch->points, {}},
                              &probability_grid);
 
@@ -113,7 +114,7 @@ std::unique_ptr<common::LuaParameterDictionary> CreateParameterDictionary() {
           } 
           return pipeline
     )text",
-          common::make_unique<cartographer::common::DummyFileResolver>());
+          absl::make_unique<cartographer::common::DummyFileResolver>());
   return parameter_dictionary;
 }
 
